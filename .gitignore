@@ -1,6 +1,7 @@
 .vscode/
 .github/
 build/
+.cache/
 Camera/
 logs/
 assets/img_with_q/
@@ -13,3 +14,5 @@ testvideos/
 watchdog.sh
 records_24/
 records_25/
+User/xrobot_main.hpp
+User/xrobot_main_sharetopic.hpp
