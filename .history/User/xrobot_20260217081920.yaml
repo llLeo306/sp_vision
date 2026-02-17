@@ -1,0 +1,114 @@
+global_settings:
+  monitor_sleep_ms: 1000
+
+modules:
+  - id: sp_camera
+    name: SpVisionCamera
+    constructor_args:
+      cfg:
+        camera:
+          camera_name: "hikrobot"
+          exposure_ms: 2.0
+          gamma: 1.0
+          gain: 16.0
+          vid_pid: "2bdf:0001"
+        use_video: true
+        video_path: "Modules/SpVisionCommon/assets/demo/demo.avi"
+        loop_video: true
+        preview: false
+        publish_interval_ms: 0
+
+  - id: sp_detector
+    name: SpVisionDetector
+    constructor_args:
+      cfg:
+        yolo_name: "yolov5"
+        debug: false
+        runtime:
+          model_path: "Modules/SpVisionCommon/assets/yolov5.xml"
+          device: "CPU"
+          threshold: 150
+          min_confidence: 0.8
+          roi_x: 420
+          roi_y: 50
+          roi_width: 600
+          roi_height: 600
+          use_roi: false
+          use_traditional: true
+        classifier:
+          classify_model: "Modules/SpVisionCommon/assets/tiny_resnet.onnx"
+        detector:
+          classifier:
+            classify_model: "Modules/SpVisionCommon/assets/tiny_resnet.onnx"
+          threshold: 150
+          max_angle_error_deg: 45
+          min_lightbar_ratio: 1.5
+          max_lightbar_ratio: 20
+          min_lightbar_length: 8
+          min_armor_ratio: 1
+          max_armor_ratio: 5
+          max_side_ratio: 1.5
+          min_confidence: 0.8
+          max_rectangular_error_deg: 25
+
+  - id: sp_state
+    name: SpVisionState
+    constructor_args:
+      cfg:
+        publish_interval_ms: 2
+        mock_mode: true
+        mock_bullet_speed: 30.0
+        use_topic_quaternion: false
+        quaternion_topic_name: "ahrs_quaternion"
+        cboard:
+          can_interface: "can0"
+          quaternion_canid: 256
+          bullet_speed_canid: 257
+          send_canid: 255
+
+  - id: sp_tracker
+    name: SpVisionTracker
+    constructor_args:
+      cfg:
+        debug_view: true
+        enable_outpost_debug_log: true
+        outpost_debug_log_dir: "logs/analysis"
+        save_debug_video: true
+        debug_video_path: "logs/analysis/reprojection_debug.avi"
+        debug_video_fps: 30.0
+        tracker:
+          enemy_color: "blue"
+          min_detect_count: 5
+          max_temp_lost_count: 15
+          outpost_max_temp_lost_count: 75
+          max_match_distance: 0.15
+          max_match_yaw_diff: 1.0
+          outpost_extra_match_yaw_diff: 0.7
+        solver:
+          camera_matrix: [1818.3669452465165, 0, 751.06226574703498, 0, 1822.494494078506, 530.43671556112133, 0, 0, 1]
+          distort_coeffs: [-0.077944626599568856, 0.15447826031486889, -0.0025714394278524674, 0.00083016311301273629, 0]
+          R_gimbal2imubody: [-1, 0, 0, 0, -1, 0, 0, 0, 1]
+          R_camera2gimbal: [-0.0083195760046954614, 0.010498791137270739, 0.99991027599468041, -0.99960756138647755, -0.026835747568381807, -0.0080352891314148939, 0.026748978935305992, -0.99958472279097077, 0.010717933047771133]
+          t_camera2gimbal: [0.094969301833534511, 0.095006290298006682, 0.050987066291756609]
+
+  - id: sp_aimer
+    name: SpVisionAimer
+    constructor_args:
+      cfg:
+        to_now: false
+        aimer:
+          yaw_offset_deg: -1
+          left_yaw_offset_deg: -1
+          right_yaw_offset_deg: -1
+          enable_dual_yaw_offset: false
+          pitch_offset_deg: -1.4
+          comming_angle_deg: 60
+          leaving_angle_deg: 20
+          high_speed_delay_time: 0.03
+          low_speed_delay_time: 0.015
+          decision_speed: 8
+        shooter:
+          first_tolerance_deg: 2.2
+          second_tolerance_deg: 1.2
+          judge_distance: 2
+          auto_fire: true

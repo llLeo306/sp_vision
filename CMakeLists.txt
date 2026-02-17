@@ -57,6 +57,11 @@ if(SP_VISION_BUILD_XROBOT)
     PUBLIC xr
     PUBLIC fmt::fmt
     PUBLIC yaml-cpp
+    PRIVATE auto_aim
+    PRIVATE auto_buff
+    PRIVATE io
+    PRIVATE tools
+    PRIVATE omniperception
   )
   target_link_options(sp_vision_xrobot PRIVATE -Wl,--no-as-needed)
   # Keep OpenCV libs at the end of link line to satisfy symbols introduced by static libs.

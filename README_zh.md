@@ -180,3 +180,27 @@ xrobot_gen_main -c User/xrobot.yaml -o User/xrobot_main.hpp && \
 cmake --build build -j$(nproc) --target sp_vision_xrobot && \
 ./build/sp_vision_xrobot
 ```
+
+## 12. 日志与曲线图（新增）
+运行程序后会自动生成：
+- 文本日志：`logs/*.log`
+- 自瞄结构化日志：`logs/analysis/aim_trace_*.csv`
+
+CSV 包含关键字段：
+- `cmd_yaw/cmd_pitch`
+- `gimbal_yaw/gimbal_pitch`
+- `yaw_err/pitch_err`
+- `control/shoot/aim_valid`
+- `target_distance/target_vyaw`
+
+生成曲线图（默认用最新 CSV）：
+```bash
+python3 tool/plot_aim_log.py
+```
+
+指定输入和输出：
+```bash
+python3 tool/plot_aim_log.py \
+  --input logs/analysis/aim_trace_2026-02-16_16-00-00.csv \
+  --output logs/analysis/aim_trace_2026-02-16_16-00-00.png
+```

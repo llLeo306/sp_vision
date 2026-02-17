@@ -1,0 +1,217 @@
+name: XRobot Module Compile Check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: xrimage/xrimage-webots
+      options: --user 0
+
+    env:
+      XR_MODULE_NAME: ${{ github.event.repository.name }}
+
+    steps:
+      - name: Checkout current module repository
+        uses: actions/checkout@v4
+        with:
+          path: Modules/${{ env.XR_MODULE_NAME }}
+
+      - name: Pull libxr
+        run: git clone --depth=1 https://github.com/Jiu-xiao/libxr ./libxr
+
+      - name: Resolve dependency modules
+        run: |
+          set -euo pipefail
+
+          get_direct_deps() {
+            case "$1" in
+              SharedTopic|SharedTopicClient|SpVisionCommon)
+                ;;
+              SpVisionAutoAimCore)
+                echo "SpVisionCommon SpVisionState SpVisionCamera SpVisionOmniCore"
+                ;;
+              SpVisionAutoBuffCore)
+                echo "SpVisionCommon SpVisionAutoAimCore SpVisionState SpVisionCamera SpVisionOmniCore"
+                ;;
+              SpVisionOmniCore)
+                echo "SpVisionCommon SpVisionAutoAimCore SpVisionState SpVisionCamera"
+                ;;
+              SpVisionCamera)
+                echo "SpVisionCommon SpVisionAutoAimCore SpVisionState SpVisionOmniCore"
+                ;;
+              SpVisionState)
+                echo "SpVisionCommon SpVisionAutoAimCore SpVisionCamera SpVisionOmniCore"
+                ;;
+              SpVisionDetector|SpVisionTracker|SpVisionAimer)
+                echo "SpVisionCommon SpVisionAutoAimCore SpVisionState SpVisionCamera SpVisionOmniCore"
+                ;;
+              *)
+                ;;
+            esac
+          }
+
+          declare -A visited=()
+          queue=("$XR_MODULE_NAME")
+          ordered=()
+
+          while ((${#queue[@]})); do
+            mod="${queue[0]}"
+            queue=("${queue[@]:1}")
+
+            if [[ -n "${visited[$mod]:-}" ]]; then
+              continue
+            fi
+            visited["$mod"]=1
+            ordered+=("$mod")
+
+            deps="$(get_direct_deps "$mod")"
+            for dep in $deps; do
+              if [[ -z "${visited[$dep]:-}" ]]; then
+                queue+=("$dep")
+              fi
+            done
+          done
+
+          printf '%s\n' "${ordered[@]}" > .ci_required_modules.txt
+          echo "[INFO] required modules: ${ordered[*]}"
+
+      - name: Pull dependency modules only
+        run: |
+          set -euo pipefail
+
+          clone_one() {
+            local mod="$1"
+            local path="Modules/$mod"
+
+            if [[ -d "$path" ]]; then
+              return 0
+            fi
+
+            if git clone --depth=1 "https://github.com/${GITHUB_REPOSITORY_OWNER}/${mod}.git" "$path"; then
+              echo "[INFO] pulled ${GITHUB_REPOSITORY_OWNER}/${mod}"
+              return 0
+            fi
+
+            if git clone --depth=1 "https://github.com/QDU-Robomaster/${mod}.git" "$path"; then
+              echo "[INFO] pulled QDU-Robomaster/${mod}"
+              return 0
+            fi
+
+            if [[ ! -d .ci_sp_vision_bundle ]]; then
+              if ! git clone --depth=1 "https://github.com/${GITHUB_REPOSITORY_OWNER}/sp_vision_25.git" .ci_sp_vision_bundle; then
+                git clone --depth=1 "https://github.com/QDU-Robomaster/sp_vision_25.git" .ci_sp_vision_bundle || true
+              fi
+            fi
+
+            if [[ -d ".ci_sp_vision_bundle/Modules/$mod" ]]; then
+              cp -a ".ci_sp_vision_bundle/Modules/$mod" "$path"
+              echo "[INFO] copied $mod from sp_vision bundle"
+              return 0
+            fi
+
+            echo "::error::missing dependency module $mod"
+            return 1
+          }
+
+          while IFS= read -r mod; do
+            [[ -z "$mod" ]] && continue
+            clone_one "$mod"
+          done < .ci_required_modules.txt
+
+      - name: Install system and Python dependencies
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git build-essential cmake pkg-config python3 python3-pip \
+            libeigen3-dev libfmt-dev libyaml-cpp-dev libspdlog-dev nlohmann-json3-dev \
+            libopencv-dev libusb-1.0-0-dev
+
+          python3 -m pip install --break-system-packages --upgrade pip
+          python3 -m pip install --break-system-packages openvino-dev
+          echo "OpenVINO_DIR=$(python3 -c \"import openvino, pathlib; print(pathlib.Path(openvino.__file__).resolve().parent / 'cmake')\")" >> "$GITHUB_ENV"
+
+      - name: Normalize OpenVINO CMake path
+        run: |
+          set -euo pipefail
+          for f in \
+            Modules/SpVisionAutoAimCore/tasks/auto_aim/CMakeLists.txt \
+            Modules/SpVisionAutoBuffCore/tasks/auto_buff/CMakeLists.txt \
+            Modules/SpVisionOmniCore/tasks/omniperception/CMakeLists.txt; do
+            if [[ -f "$f" ]]; then
+              sed -i '/^[[:space:]]*set(OpenVINO_DIR[[:space:]]\+".*")/d' "$f"
+            fi
+          done
+
+      - name: Generate CI CMakeLists.txt
+        run: |
+          cat > CMakeLists.txt <<'CMAKE'
+          cmake_minimum_required(VERSION 3.16.3)
+          project(sp_vision_module_ci CXX)
+
+          set(CMAKE_CXX_STANDARD 17)
+          set(CMAKE_BUILD_TYPE Release)
+
+          find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio dnn calib3d)
+          find_package(fmt REQUIRED)
+          find_package(Eigen3 REQUIRED)
+          find_package(spdlog REQUIRED)
+          find_package(yaml-cpp REQUIRED)
+          find_package(nlohmann_json REQUIRED)
+          find_package(OpenVINO REQUIRED)
+
+          include_directories(${EIGEN3_INCLUDE_DIR})
+          include_directories(${OpenCV_INCLUDE_DIRS})
+          include_directories(${PROJECT_SOURCE_DIR})
+          include_directories(${PROJECT_SOURCE_DIR}/Modules)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionCommon)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionCamera)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionState)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoAimCore)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoBuffCore)
+          include_directories(${PROJECT_SOURCE_DIR}/Modules/SpVisionOmniCore)
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionCommon/tools/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionCommon/tools ${CMAKE_BINARY_DIR}/spvision_tools)
+          endif()
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionState/io/serial/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionState/io/serial ${CMAKE_BINARY_DIR}/spvision_serial)
+          endif()
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionState/io/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionState/io ${CMAKE_BINARY_DIR}/spvision_io)
+          endif()
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoAimCore/tasks/auto_aim/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoAimCore/tasks/auto_aim ${CMAKE_BINARY_DIR}/spvision_auto_aim)
+          endif()
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoBuffCore/tasks/auto_buff/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionAutoBuffCore/tasks/auto_buff ${CMAKE_BINARY_DIR}/spvision_auto_buff)
+          endif()
+
+          if(EXISTS ${PROJECT_SOURCE_DIR}/Modules/SpVisionOmniCore/tasks/omniperception/CMakeLists.txt)
+            add_subdirectory(${PROJECT_SOURCE_DIR}/Modules/SpVisionOmniCore/tasks/omniperception ${CMAKE_BINARY_DIR}/spvision_omniperception)
+          endif()
+
+          set(XROBOT_MODULES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Modules)
+          set(LIBXR_SYSTEM Linux)
+          set(LIBXR_DRIVER Linux)
+          set(LIBXR_LOG_LEVEL 4)
+          set(LIBXR_NO_EIGEN True)
+
+          add_subdirectory(libxr)
+          CMAKE
+
+      - name: Configure
+        run: cmake -S . -B build -DOpenVINO_DIR="${OpenVINO_DIR}"
+
+      - name: Build (compile check)
+        run: cmake --build build --target xr -j"$(nproc)"

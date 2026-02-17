@@ -1,0 +1,30 @@
+name: root-ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  repo-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Root Repo Policy
+        run: |
+          echo "Root repository CI (modules are maintained in separate repositories)."
+          if git ls-files 'Modules/**' | grep -q .; then
+            echo "Error: tracked files found under Modules/."
+            echo "This root repository should not track module sources."
+            exit 1
+          fi
+          echo "OK: no tracked module files in root repo."
+
+      - name: Basic File Presence
+        run: |
+          test -f CMakeLists.txt
+          test -f readme.md
+          echo "OK: basic root files found."

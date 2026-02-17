@@ -1,0 +1,12 @@
+modules:
+  - local/SpVisionCommon
+  - local/SpVisionAutoAimCore
+  - local/SpVisionAutoBuffCore
+  - local/SpVisionOmniCore
+  - local/SpVisionCamera
+  - local/SpVisionDetector
+  - local/SpVisionState
+  - local/SpVisionTracker
+  - local/SpVisionAimer
+  - local/SharedTopic
+  - local/SharedTopicClient
