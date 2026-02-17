@@ -74,15 +74,6 @@ private:
   static double outpost_cast_threshold_;
   static double last_outpost_z_diff_;
   static bool last_outpost_switch_;
-  static int outpost_z_level_;
-  static double outpost_z_mid_;
-  static double outpost_last_high_z_;
-  static double outpost_last_low_z_;
-  static int outpost_switch_cooldown_;
-  static bool outpost_seen_high_;
-  static int outpost_trend_dir_;
-  static bool outpost_model_locked_;
-  static double outpost_last_switch_yaw_;
 };
 
 }  // namespace auto_aim
