@@ -1,5 +1,7 @@
 #include "target.hpp"
 
+#include <math.h>
+
 #include <algorithm>
 #include <numeric>
 
@@ -8,21 +10,12 @@
 
 namespace auto_aim
 {
-double Target::outpost_dz_ = 0.0;
-double Target::outpost_r_ = 0.0;
+double Target::outpost_dz_ = 0.10;
+double Target::outpost_r_ = 0.2765;
 int Target::outpost_idx_ = 0;
-double Target::outpost_cast_threshold_ = 0.0;
+double Target::outpost_cast_threshold_ = 0.18;
 double Target::last_outpost_z_diff_ = 0.0;
 bool Target::last_outpost_switch_ = false;
-int Target::outpost_z_level_ = 0;
-double Target::outpost_z_mid_ = 0.0;
-double Target::outpost_last_high_z_ = 0.0;
-double Target::outpost_last_low_z_ = 0.0;
-int Target::outpost_switch_cooldown_ = 0;
-bool Target::outpost_seen_high_ = false;
-int Target::outpost_trend_dir_ = 0;
-bool Target::outpost_model_locked_ = false;
-double Target::outpost_last_switch_yaw_ = 0.0;
 
 Target::Target(
   const Armor & armor, std::chrono::steady_clock::time_point t, double radius, int armor_num,
@@ -152,6 +145,10 @@ void Target::predict(double dt)
     this->ekf_.x[7] = this->ekf_.x[7] > 0 ? 2.51 : -2.51;
 
   ekf_.predict(F, Q, f);
+
+  if (name == ArmorName::outpost && armor_num_ == 3) {
+    ekf_.x[8] = outpost_r_;
+  }
 }
 
 void Target::update(const Armor & armor, bool force_switch, int forced_id)
@@ -200,15 +197,26 @@ void Target::update(const Armor & armor, bool force_switch, int forced_id)
   if (is_switch_) switch_count_++;
 
   if (name == ArmorName::outpost && armor_num_ == 3) {
-    // Keep debug fields but do not alter main EKF model.
-    outpost_idx_ = id;
-    outpost_dz_ = 0.0;
-    if (has_last_measure_z_) {
-      last_outpost_z_diff_ = last_measure_z_ - armor.xyz_in_world[2];
-    } else {
-      last_outpost_z_diff_ = 0.0;
+    if (is_switch_) {
+      if (has_last_measure_z_) {
+        last_outpost_z_diff_ = last_measure_z_ - armor.xyz_in_world[2];
+        if (last_outpost_z_diff_ > outpost_cast_threshold_) {
+          // 重置索引
+          outpost_idx_ = 0;
+        } else {
+          // 正常跳变
+          outpost_idx_ = (outpost_idx_ + 1) % 3;
+        }
+      } else {
+        last_outpost_z_diff_ = 0.0;
+        outpost_idx_ = 0;
+      }
+      double damping = 0.5;
+      ekf_.x[1] *= damping;  // vx
+      ekf_.x[3] *= damping;  // vy
+      ekf_.x[5] *= damping;  // vz
     }
-    last_outpost_switch_ = (id != last_id);
+    last_outpost_switch_ = is_switch_;
     has_last_measure_z_ = true;
     last_measure_z_ = armor.xyz_in_world[2];
   }
@@ -303,12 +311,20 @@ bool Target::convergened()
 Eigen::Vector3d Target::h_armor_xyz(const Eigen::VectorXd & x, int id) const
 {
   auto angle = tools::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
-  auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
 
-  auto r = (use_l_h) ? x[8] + x[9] : x[8];
+  double r = NAN, armor_z = NAN;
+  if (armor_num_ == 3 && name == ArmorName::outpost) {
+    r = x[8];
+    int plate_level = (outpost_idx_ - id + 3) % 3;  // 0=low, 1=mid, 2=high
+    armor_z = x[4] + outpost_dz_ * (plate_level - 1);
+  } else {
+    auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
+    r = (use_l_h) ? x[8] + x[9] : x[8];
+    armor_z = (use_l_h) ? x[4] + x[10] : x[4];
+  }
+
   auto armor_x = x[0] - r * std::cos(angle);
   auto armor_y = x[2] - r * std::sin(angle);
-  auto armor_z = (use_l_h) ? x[4] + x[10] : x[4];
 
   return {armor_x, armor_y, armor_z};
 }
@@ -316,18 +332,27 @@ Eigen::Vector3d Target::h_armor_xyz(const Eigen::VectorXd & x, int id) const
 Eigen::MatrixXd Target::h_jacobian(const Eigen::VectorXd & x, int id) const
 {
   auto angle = tools::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
-  auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
 
-  auto r = (use_l_h) ? x[8] + x[9] : x[8];
+  double r = NAN, dx_dr = NAN, dy_dr = NAN, dx_dl = NAN, dy_dl = NAN, dz_dh = NAN;
+  if (armor_num_ == 3 && name == ArmorName::outpost) {
+    r = x[8];
+    dx_dr = -std::cos(angle);
+    dy_dr = -std::sin(angle);
+    dx_dl = 0.0;
+    dy_dl = 0.0;
+    dz_dh = 0.0;
+  } else {
+    auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
+    r = (use_l_h) ? x[8] + x[9] : x[8];
+    dx_dr = -std::cos(angle);
+    dy_dr = -std::sin(angle);
+    dx_dl = (use_l_h) ? -std::cos(angle) : 0.0;
+    dy_dl = (use_l_h) ? -std::sin(angle) : 0.0;
+    dz_dh = (use_l_h) ? 1.0 : 0.0;
+  }
+
   auto dx_da = r * std::sin(angle);
   auto dy_da = -r * std::cos(angle);
-
-  auto dx_dr = -std::cos(angle);
-  auto dy_dr = -std::sin(angle);
-  auto dx_dl = (use_l_h) ? -std::cos(angle) : 0.0;
-  auto dy_dl = (use_l_h) ? -std::sin(angle) : 0.0;
-
-  auto dz_dh = (use_l_h) ? 1.0 : 0.0;
 
   // clang-format off
   Eigen::MatrixXd H_armor_xyza{
